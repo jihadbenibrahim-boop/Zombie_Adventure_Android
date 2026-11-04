@@ -1,0 +1,40 @@
+name: Build Zombie Adventure APK
+
+on:
+workflow_dispatch:
+
+jobs:
+build:
+runs-on: ubuntu-22.04
+steps:
+- name: Checkout repository
+uses: actions/checkout@v4
+
+  - name: Show repository files
+    run: |
+      echo "Repository files:"
+      ls -la
+      echo "Android project:"
+      ls -la Zombie_Adventure_Android
+
+  - name: Install build tools
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip python3-venv autoconf libtool pkg-config zlib1g-dev libncurses-dev cmake libffi-dev libssl-dev
+      python3 -m venv .venv
+      . .venv/bin/activate
+      pip install --upgrade pip setuptools
+      pip install buildozer cython==0.29.36
+
+  - name: Build Android APK
+    working-directory: Zombie_Adventure_Android
+    run: |
+      ../.venv/bin/buildozer -v android debug
+
+  - name: Upload APK
+    if: success()
+    uses: actions/upload-artifact@v4
+    with:
+      name: Zombie-Adventure-Android-APK
+      path: Zombie_Adventure_Android/bin/*.apk
+      if-no-files-found: error
