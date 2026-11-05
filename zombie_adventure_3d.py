@@ -23,7 +23,7 @@ window.fps_counter.enabled = True
 
 # World/gameplay settings
 WORLD_END = 34
-PLAYER_START = Vec3(-30, 0, 0)
+PLAYER_START = Vec3(-42, 0, 0)
 PLAYER_SPEED = 7.5
 JUMP_SPEED = 8.5
 GRAVITY = 22
@@ -36,6 +36,21 @@ AmbientLight(color=color.rgba(150, 150, 170, 255))
 sun = DirectionalLight(color=color.rgba(255, 238, 205, 255))
 sun.look_at(Vec3(1, -2, -1))
 
+# Lobby / entrance hall before the main street.
+Entity(model="cube", color=color.rgb(97, 103, 112), scale=(10, 0.2, 8), position=(-42, 0.0, 0), collider="box")
+Entity(model="cube", color=color.rgb(128, 130, 136), scale=(0.3, 3.2, 7.8), position=(-46.7, 1.6, 0), collider="box")
+Entity(model="cube", color=color.rgb(128, 130, 136), scale=(0.3, 3.2, 7.8), position=(-37.3, 1.6, 0), collider="box")
+Entity(model="cube", color=color.rgb(128, 130, 136), scale=(9.0, 3.2, 0.3), position=(-42, 1.6, -3.8), collider="box")
+Entity(model="cube", color=color.rgb(128, 130, 136), scale=(9.0, 3.2, 0.3), position=(-42, 1.6, 3.8), collider="box")
+# Front opening to the street with a door frame.
+Entity(model="cube", color=color.rgb(58, 52, 44), scale=(5.4, 3.0, 0.2), position=(-35.5, 1.5, 0), collider="box")
+Entity(model="cube", color=color.rgb(215, 166, 98), scale=(2.2, 2.4, 0.18), position=(-35.5, 1.5, 0.12))
+# Lobby sign and light.
+Text(parent=camera.ui, text="LOBBY", position=(-0.18, 0.17), scale=1.2, color=color.rgb(245, 220, 120))
+Entity(model="cube", color=color.rgb(255, 207, 106), scale=(0.7, 0.7, 0.7), position=(-42, 4.2, 0))
+PointLight(parent=Entity(model="sphere", color=color.rgb(255, 212, 138), scale=0.6, position=(-42, 4.2, 0)),
+          color=color.rgb(255, 212, 138), intensity=2.0, range=14)
+
 # Ground and a long road corridor.
 Entity(model="cube", color=color.rgb(74, 120, 66), scale=(90, 1, 34),
        position=(0, -0.55, 0), collider="box")
@@ -43,7 +58,7 @@ Entity(model="cube", color=color.rgb(82, 82, 78), scale=(76, 0.08, 12),
        position=(0, -0.015, 0))
 for z in (-6.05, 6.05):
     Entity(model="cube", color=color.rgb(220, 202, 145), scale=(76, 0.12, 0.12),
-           position=(0, 0.05, z))
+            position=(0, 0.05, z))
 # Broken low walls make the path read as a corridor without blocking movement.
 for side in (-1, 1):
     for x in range(-35, 37, 10):
