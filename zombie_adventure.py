@@ -1,292 +1,521 @@
-# لعبة مغامرات وقتال زومبي - Python + Pygame
-# التحكم: الأسهم أو A/D للحركة، Space للقفز، X لإطلاق النار، R لإعادة اللعب
-# شغّل الملف في Thonny بعد تثبيت pygame.
+"""مغامرة الزومبي ثلاثية الأبعاد.
+التثبيت: python -m pip install ursina
+لأفضل عرض للعربية اختيارياً: python -m pip install arabic-reshaper python-bidi
+"""
 
-import pygame
+from ursina import *
+import math
+import os
 import random
-import sys
+import tempfile
+import wave
+from array import array
 
-pygame.init()
+app = Ursina()
+window.title = "مغامرة الزومبي 3D"
+window.borderless = False
+window.fullscreen = False
+window.color = color.rgb(40, 55, 70)
+window.fps_counter.enabled = True
 
-WIDTH, HEIGHT = 960, 600
-FPS = 60
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Zombie Adventure - لعبة المغامرات")
-clock = pygame.time.Clock()
+# دعم تشكيل العربية اختيارياً. إن لم تتوفر المكتبتان سيظل النص العربي ظاهراً
+# في البيئات التي تحتوي خطاً عربياً مناسباً.
+def ar(text):
+    try:
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+        return get_display(arabic_reshaper.reshape(text))
+    except ImportError:
+        return text
 
-# الألوان
-SKY = (155, 215, 245)
-GROUND = (65, 135, 75)
-DARK_GREEN = (40, 95, 55)
-BROWN = (125, 82, 48)
-PLAYER_COLOR = (45, 90, 220)
-ZOMBIE_COLOR = (80, 150, 70)
-DARK = (30, 35, 45)
-WHITE = (255, 255, 255)
-YELLOW = (255, 210, 40)
-RED = (220, 55, 55)
-GRAY = (110, 115, 125)
+WORLD_END = 34
+PLAYER_START = Vec3(-42, 0.85, 0)
+PLAYER_SPEED, JUMP_SPEED, GRAVITY = 8.2, 8.5, 22
+BULLET_SPEED = 30
+MAX_HEALTH = 5
+MAG_SIZE, START_RESERVE, START_GRENADES = 24, 120, 3
+MAX_WAVES = 3
 
-font = pygame.font.SysFont("arial", 24)
-small_font = pygame.font.SysFont("arial", 18)
-big_font = pygame.font.SysFont("arial", 46)
+Sky()
+AmbientLight(color=color.rgba(125, 125, 145, 255))
+sun = DirectionalLight(color=color.rgba(255, 230, 195, 255))
+sun.look_at(Vec3(1, -2, -1))
 
-WORLD_WIDTH = 3200
-GROUND_Y = 500
-GRAVITY = 0.65
+# الردهة: أرضية ومدخل مفتوح، مع إطار وباب جانبي لا يسد الطريق.
+Entity(model="cube", color=color.rgb(74, 78, 82), scale=(12, .18, 9),
+       position=(-41, -.08, 0))
+for z in (-4.35, 4.35):
+    Entity(model="cube", color=color.rgb(132, 130, 121), scale=(10, 3.2, .35),
+           position=(-41, 1.5, z), collider="box")
+for x in (-46, -36):
+    Entity(model="cube", color=color.rgb(132, 130, 121), scale=(.35, 3.2, 8.7),
+           position=(x, 1.5, 0), collider="box")
+# إطار بوابة الخروج إلى الشارع (فتحة بعرض كافٍ في المنتصف).
+for z in (-2.0, 2.0):
+    Entity(model="cube", color=color.rgb(91, 61, 43), scale=(.35, 3.2, .35),
+           position=(-35.6, 1.6, z))
+Entity(model="cube", color=color.rgb(91, 61, 43), scale=(.35, .35, 4.3),
+       position=(-35.6, 3.2, 0))
+# باب خشبي على جانب الردهة، مع لافتة وضوء.
+Entity(model="cube", color=color.rgb(85, 51, 37), scale=(.12, 2.2, 1.1),
+       position=(-41, 1.05, 3.9))
+Entity(model="cube", color=color.rgb(232, 184, 95), scale=(.15, .55, 2.4),
+       position=(-41, 2.55, 0))
+Text(parent=camera.ui, text=ar("ردهة النجاة"), position=(-.14, .20),
+     scale=1.1, color=color.rgb(255, 223, 130))
+light_orb = Entity(model="sphere", color=color.rgb(255, 212, 138), scale=.35,
+                   position=(-41, 3.4, 0))
+PointLight(parent=light_orb, color=color.rgb(255, 190, 110), intensity=1.5, range=12)
 
-platforms = [
-    pygame.Rect(0, GROUND_Y, WORLD_WIDTH, HEIGHT - GROUND_Y),
-    pygame.Rect(340, 420, 150, 18),
-    pygame.Rect(650, 365, 160, 18),
-    pygame.Rect(980, 430, 180, 18),
-    pygame.Rect(1300, 380, 170, 18),
-    pygame.Rect(1650, 330, 180, 18),
-    pygame.Rect(2000, 420, 180, 18),
-    pygame.Rect(2350, 360, 190, 18),
-    pygame.Rect(2700, 410, 180, 18),
-]
+# الشارع والممرات.
+Entity(model="cube", color=color.rgb(74, 120, 66), scale=(90, 1, 34),
+       position=(0, -.55, 0), collider="box")
+Entity(model="cube", color=color.rgb(75, 76, 75), scale=(82, .08, 12),
+       position=(0, -.015, 0))
+for z in (-6.05, 6.05):
+    Entity(model="cube", color=color.rgb(225, 203, 140), scale=(82, .12, .12),
+           position=(0, .05, z))
+for side in (-1, 1):
+    for x in range(-32, 38, 10):
+        Entity(model="cube", color=color.rgb(118, 112, 99), scale=(7.5, 1.5, .45),
+               position=(x, .75, side * 8.7), collider="box")
+        Entity(model="cube", color=color.rgb(154, 148, 129), scale=(7.5, .18, .5),
+               position=(x, 1.55, side * 8.7))
 
-def make_zombies():
-    return [
-        {"rect": pygame.Rect(x, GROUND_Y - 42, 32, 42), "speed": random.choice([1.1, 1.4, 1.7]), "hp": 2, "alive": True}
-        for x in [430, 760, 1080, 1450, 1780, 2130, 2480, 2850, 3050]
-    ]
+# من��زل على جانبي الطريق.
+def add_house(x, z, tint):
+    Entity(model="cube", color=tint, scale=(5, 3.2, 4), position=(x, 1.6, z), collider="box")
+    Entity(model="cube", color=color.rgb(91, 48, 41), scale=(5.7, .45, 4.7),
+           position=(x, 3.35, z))
+    front = -1 if z < 0 else 1
+    Entity(model="cube", color=color.rgb(67, 45, 38), scale=(.9, 1.8, .12),
+           position=(x, .9, z + front * 2.06))
+    for wx in (-1.45, 1.45):
+        Entity(model="cube", color=color.rgb(153, 213, 220), scale=(.85, .8, .12),
+               position=(x + wx, 2.15, z + front * 2.07))
+    lamp = Entity(model="sphere", color=color.rgb(255, 220, 125), scale=.22,
+                  position=(x, 2.8, z + front * 2.2))
+    PointLight(parent=lamp, color=color.rgb(255, 190, 100), intensity=.4, range=7)
 
-def make_coins():
-    positions = [
-        (260, 455), (390, 375), (700, 320), (1040, 385),
-        (1370, 335), (1720, 285), (2050, 375), (2410, 315),
-        (2760, 365), (3000, 455)
-    ]
-    return [pygame.Rect(x, y, 18, 18) for x, y in positions]
+for i, x in enumerate((-25, -13, 1, 15, 27)):
+    add_house(x, -12, color.rgb(157 + (i % 2) * 12, 117, 91))
+    add_house(x - 4, 12, color.rgb(130, 143 + (i % 2) * 10, 112))
+
+# أعمدة إنارة وأشجار.
+for x in range(-30, 35, 10):
+    for z in (-7.2, 7.2):
+        Entity(model="cube", color=color.rgb(50, 52, 48), scale=(.16, 3.5, .16),
+               position=(x, 1.75, z))
+        lamp = Entity(model="sphere", color=color.rgb(255, 229, 160), scale=.32,
+                      position=(x, 3.55, z))
+        PointLight(parent=lamp, color=color.rgb(255, 210, 135), intensity=.6, range=11)
+for x in range(-32, 38, 8):
+    for z in (-15, 15):
+        Entity(model="cube", color=color.rgb(103, 70, 47), scale=(.55, 2.4, .55),
+               position=(x, 1.2, z))
+        Entity(model="sphere", color=color.rgb(43, 105, 57), scale=(2.2, 2.5, 2.2),
+               position=(x, 3.1, z))
+
+# بوابة نهاية المرحلة.
+for x, tint in ((WORLD_END, color.rgb(230, 195, 72)),
+                (WORLD_END + 2, color.rgb(225, 75, 58))):
+    Entity(model="cube", color=tint, scale=(.25, 4, .25), position=(x, 2, 0))
+Entity(model="cube", color=color.rgb(239, 218, 145), scale=(2.2, .2, .25),
+       position=(WORLD_END + 1, 3.85, 0))
+
+player = Entity(model="cube", color=color.rgb(45, 90, 220), scale=(.85, 1.7, .65),
+                position=PLAYER_START, collider="box")
+Entity(parent=player, model="sphere", color=color.rgb(231, 190, 150),
+       scale=(.68, .52, .68), position=(0, .68, 0))
+Entity(parent=player, model="cube", color=color.rgb(45, 48, 55),
+       scale=(.22, .18, .9), position=(.28, .12, .55))
+player.vy = 0
+player.health = MAX_HEALTH
+player.score = 0
+player.invulnerable = 0
+player.grounded = True
+player.ammo = MAG_SIZE
+player.reserve = START_RESERVE
+player.grenades = START_GRENADES
+
+zombies, bullets, coins, grenades, explosions = [], [], [], [], []
+state = "menu"
+fire_cooldown = 0.0
+reload_timer = 0.0
+wave = 1
+wave_delay = 0.0
+mobile_move = Vec3(0, 0, 0)
+mobile_move_timer = 0.0
+mobile_jump = False
+
+# مؤثرات صوتية مولدة محلياً؛ لا تحتاج ملفات صوت إضافية.
+audio_dir = tempfile.mkdtemp(prefix="zombie_game_audio_")
+def make_tone(filename, frequency, duration, volume=.3, second_frequency=None):
+    path = os.path.join(audio_dir, filename)
+    rate = 22050
+    samples = array("h")
+    count = int(rate * duration)
+    for n in range(count):
+        fade = min(1.0, n / 220, (count - n) / 400)
+        t = n / rate
+        value = math.sin(2 * math.pi * frequency * t)
+        if second_frequency:
+            value = (value + math.sin(2 * math.pi * second_frequency * t)) / 2
+        samples.append(int(32767 * volume * max(0, fade) * value))
+    with wave.open(path, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(samples.tobytes())
+    return path
+
+sounds = {}
+try:
+    for name, freq, duration in (("shot", 150, .14), ("hit", 90, .22),
+                                 ("boom", 65, .55), ("reload", 420, .18),
+                                 ("coin", 950, .15), ("win", 520, .55), ("lose", 165, .65)):
+        sounds[name] = Audio(make_tone(name + ".wav", freq, duration,
+                                       second_frequency=freq * 1.45 if name == "boom" else None),
+                             autoplay=False, volume=.75)
+except Exception:
+    sounds = {}
+
+def play_sound(name):
+    sound = sounds.get(name)
+    if sound:
+        try:
+            sound.stop()
+            sound.play()
+        except Exception:
+            pass
+
+# واجهة عربية كبيرة.
+hud = Text(parent=camera.ui, text="", origin=(1, 0), position=(.88, .46),
+           scale=1.35, background=True, color=color.white)
+help_text = Text(parent=camera.ui,
+    text=ar("الحركة: WASD أو الأسهم | قفز: مسافة | إطلاق: X/النقر | إعادة تعبئة: R | قنبلة: G"),
+    origin=(1, 0), position=(.88, .37), scale=.82, color=color.white)
+center_message = Text(parent=camera.ui, text="", origin=(0, 0), position=(0, .27),
+                      scale=1.6, color=color.yellow)
+menu_panel = Entity(parent=camera.ui, model="quad", color=color.rgba(8, 15, 24, 238),
+                    scale=(.9, .88), position=(0, 0))
+Text(parent=menu_panel, text=ar("مغامرة الزومبي ثلاثية الأبعاد"), origin=(0, 0),
+     position=(0, .29), scale=1.5, color=color.rgb(255, 220, 125))
+Text(parent=menu_panel, text=ar("قاتل موجات الزومبي، اجمع النقاط، ثم اعبر البوابة!"),
+     origin=(0, 0), position=(0, .13), scale=.95, color=color.white)
+Text(parent=menu_panel, text=ar("تحكم: WASD | قفز: مسافة | إطلاق: X | قنابل: G | تعبئة: R"),
+     origin=(0, 0), position=(0, .02), scale=.82, color=color.rgb(205, 220, 230))
+end_panel = Entity(parent=camera.ui, model="quad", color=color.rgba(8, 15, 24, 240),
+                   scale=(.78, .62), position=(0, 0), enabled=False)
+end_title = Text(parent=end_panel, text="", origin=(0, 0), position=(0, .16),
+                 scale=2.1, color=color.yellow)
+Text(parent=end_panel, text=ar("اضغط R أو زر إعادة اللعب للبدء من جديد"), origin=(0, 0),
+     position=(0, -.02), scale=.9, color=color.white)
+
+# أزرار لمس للهواتف.
+controls = Entity(parent=camera.ui, enabled=False)
+def tap_move(direction):
+    global mobile_move, mobile_move_timer
+    mobile_move, mobile_move_timer = direction, .25
+
+def tap_jump():
+    global mobile_jump
+    mobile_jump = True
+
+def touch_button(label, pos, callback, tint=color.rgba(35, 45, 55, 220)):
+    return Button(parent=controls, text=label, position=pos, scale=(.09, .09),
+                  color=tint, text_color=color.white, on_click=callback)
+
+touch_button("◀", (-.78, -.35), lambda: tap_move(Vec3(-1, 0, 0)))
+touch_button("▶", (-.60, -.35), lambda: tap_move(Vec3(1, 0, 0)))
+touch_button("▲", (-.69, -.25), lambda: tap_move(Vec3(0, 0, 1)))
+touch_button("▼", (-.69, -.45), lambda: tap_move(Vec3(0, 0, -1)))
+touch_button(ar("قفز"), (.57, -.35), tap_jump, color.rgba(45, 90, 180, 230))
+touch_button(ar("إطلاق"), (.72, -.35), lambda: fire_bullet(), color.rgba(175, 55, 45, 230))
+touch_button(ar("قنبلة"), (.87, -.35), lambda: throw_grenade(), color.rgba(160, 95, 25, 230))
+
+# إنشاء وإزالة الكيانات.
+def clear_entities(items):
+    for item in items:
+        destroy(item)
+    items.clear()
+
+def spawn_zombies(current_wave):
+    count = 7 + current_wave * 3
+    for i in range(count):
+        x = random.uniform(-24, WORLD_END - 2)
+        z = random.choice((-4, -2, 2, 4))
+        zombie = Entity(model="cube", color=color.rgb(75, 145, 65),
+                        scale=(.9, 1.8, .7), position=(x, .9, z), collider="box")
+        Entity(parent=zombie, model="sphere", color=color.rgb(125, 180, 100),
+               scale=(.72, .58, .72), position=(0, .68, 0))
+        for eye_x in (-.18, .18):
+            Entity(parent=zombie, model="sphere", color=color.red, scale=.09,
+                   position=(eye_x, .74, .32))
+        zombie.hp = 2 if current_wave < 3 else 3
+        zombie.speed = random.uniform(1.5, 2.2) + current_wave * .25
+        zombie.alive = True
+        zombies.append(zombie)
+
+def spawn_coins():
+    for x, z in [(-23, 2), (-11, -4), (0, 4), (12, -4), (22, 4), (31, 0)]:
+        coins.append(Entity(model="sphere", color=color.rgb(255, 210, 40), scale=.42,
+                            position=(x, 1.1, z)))
+
+def update_hud():
+    alive = sum(1 for z in zombies if z.alive)
+    hud.text = ar(f"الصحة: {player.health}/{MAX_HEALTH}   الذخيرة: {player.ammo}/{player.reserve}   القنابل: {player.grenades}   النقاط: {player.score}   الموجة: {wave}/{MAX_WAVES}   أعداء: {alive}")
 
 def reset_game():
-    player = pygame.Rect(70, GROUND_Y - 54, 34, 54)
-    return {
-        "player": player,
-        "vx": 0.0, "vy": 0.0, "on_ground": False,
-        "facing": 1, "health": 5, "score": 0,
-        "bullets": [], "zombies": make_zombies(), "coins": make_coins(),
-        "won": False, "lost": False, "invulnerable": 0
-    }
+    global fire_cooldown, reload_timer, wave, wave_delay, mobile_move_timer, mobile_jump
+    for group in (bullets, zombies, coins, grenades, explosions):
+        clear_entities(group)
+    player.position = PLAYER_START
+    player.rotation_y = 0
+    player.vy = 0
+    player.health = MAX_HEALTH
+    player.score = 0
+    player.invulnerable = 0
+    player.grounded = True
+    player.ammo, player.reserve, player.grenades = MAG_SIZE, START_RESERVE, START_GRENADES
+    fire_cooldown = reload_timer = wave_delay = mobile_move_timer = 0
+    mobile_jump = False
+    wave = 1
+    spawn_zombies(wave)
+    spawn_coins()
+    update_hud()
 
-game = reset_game()
-camera_x = 0
+def start_game():
+    global state
+    reset_game()
+    state = "playing"
+    menu_panel.enabled = False
+    end_panel.enabled = False
+    controls.enabled = True
+    center_message.text = ""
 
-def draw_text(text, x, y, color=WHITE, use_font=font):
-    surface = use_font.render(text, True, color)
-    screen.blit(surface, (x, y))
+def finish_game(won):
+    global state
+    state = "won" if won else "lost"
+    controls.enabled = False
+    end_panel.enabled = True
+    end_title.text = ar("أحسنت! لقد نجوت" if won else "انتهت اللعبة")
+    end_title.color = color.yellow if won else color.rgb(245, 80, 65)
+    play_sound("win" if won else "lose")
 
-def move_and_collide(rect, dx, dy):
-    rect.x += int(dx)
-    for p in platforms:
-        if rect.colliderect(p):
-            if dx > 0:
-                rect.right = p.left
-            elif dx < 0:
-                rect.left = p.right
-    rect.y += int(dy)
-    on_ground = False
-    for p in platforms:
-        if rect.colliderect(p):
-            if dy > 0:
-                rect.bottom = p.top
-                on_ground = True
-            elif dy < 0:
-                rect.top = p.bottom
-    return on_ground
-
-def draw_world():
-    screen.fill(SKY)
-    # سحب بسيطة
-    for x, y in [(100, 85), (390, 125), (730, 75), (900, 150)]:
-        pygame.draw.ellipse(screen, WHITE, (x - (camera_x // 3) % 1100, y, 70, 28))
-        pygame.draw.ellipse(screen, WHITE, (x + 20 - (camera_x // 3) % 1100, y - 12, 60, 35))
-    # تلال في الخلفية
-    for x in range(-100, WIDTH + 250, 260):
-        pygame.draw.ellipse(screen, (120, 190, 130), (x - (camera_x // 5) % 260, 360, 330, 150))
-    # منصات وأرض
-    for p in platforms:
-        r = pygame.Rect(p.x - camera_x, p.y, p.width, p.height)
-        pygame.draw.rect(screen, GROUND if p.y == GROUND_Y else BROWN, r)
-        if p.y == GROUND_Y:
-            pygame.draw.rect(screen, DARK_GREEN, (r.x, r.y, r.width, 9))
-        else:
-            pygame.draw.rect(screen, (70, 65, 60), (r.x, r.y + 10, r.width, 8))
-    # أشجار زخرفية
-    for x in range(180, WORLD_WIDTH, 420):
-        sx = x - camera_x
-        if -50 < sx < WIDTH + 50:
-            pygame.draw.rect(screen, BROWN, (sx, GROUND_Y - 65, 14, 65))
-            pygame.draw.circle(screen, DARK_GREEN, (sx + 7, GROUND_Y - 78), 33)
-
-def draw_player(rect, facing, invulnerable):
-    x, y = rect.x - camera_x, rect.y
-    if invulnerable and (invulnerable // 5) % 2 == 0:
+def reload_weapon():
+    global reload_timer
+    if state != "playing" or reload_timer > 0 or player.ammo >= MAG_SIZE or player.reserve <= 0:
         return
-    # شخصية بسيطة: رأس، جسم، ذراع وسلاح
-    pygame.draw.rect(screen, PLAYER_COLOR, (x + 5, y + 19, 24, 29), border_radius=5)
-    pygame.draw.circle(screen, (245, 205, 165), (x + 17, y + 10), 11)
-    pygame.draw.rect(screen, DARK, (x + 5, y + 45, 10, 9))
-    pygame.draw.rect(screen, DARK, (x + 20, y + 45, 10, 9))
-    if facing == 1:
-        pygame.draw.line(screen, (245, 205, 165), (x + 25, y + 27), (x + 36, y + 25), 6)
-        pygame.draw.rect(screen, GRAY, (x + 31, y + 20, 22, 8), border_radius=2)
+    reload_timer = 1.0
+    play_sound("reload")
+
+def fire_bullet():
+    global fire_cooldown
+    if state != "playing" or fire_cooldown > 0 or reload_timer > 0:
+        return
+    if player.ammo <= 0:
+        reload_weapon()
+        return
+    direction = player.forward
+    bullet = Entity(model="sphere", color=color.yellow, scale=.2,
+                    position=player.position + Vec3(0, .25, 0) + direction * .85)
+    bullet.velocity = direction * BULLET_SPEED
+    bullet.life = 1.5
+    bullets.append(bullet)
+    player.ammo -= 1
+    fire_cooldown = .16
+    play_sound("shot")
+    update_hud()
+
+def throw_grenade():
+    if state != "playing" or player.grenades <= 0:
+        return
+    direction = player.forward
+    grenade = Entity(model="sphere", color=color.rgb(63, 75, 55), scale=.38,
+                     position=player.position + Vec3(0, .5, 0) + direction * .8)
+    grenade.velocity = direction * 8 + Vec3(0, 5, 0)
+    grenade.fuse = 1.1
+    grenades.append(grenade)
+    player.grenades -= 1
+    play_sound("shot")
+    update_hud()
+
+def explode(grenade):
+    center = grenade.position
+    effect = Entity(model="sphere", color=color.rgba(255, 115, 25, 170),
+                    scale=.5, position=center)
+    effect.life = .35
+    explosions.append(effect)
+    for zombie in zombies:
+        if zombie.alive and (zombie.position - center).length() < 5.2:
+            zombie.hp -= 3
+            if zombie.hp <= 0:
+                zombie.alive = False
+                zombie.enabled = False
+                player.score += 10
+    destroy(grenade)
+    grenades.remove(grenade)
+    play_sound("boom")
+    update_hud()
+
+def take_damage():
+    if player.invulnerable > 0 or state != "playing":
+        return
+    player.health -= 1
+    player.invulnerable = 1.0
+    play_sound("hit")
+    if player.health <= 0:
+        player.health = 0
+        update_hud()
+        finish_game(False)
+
+camera.position = player.position + Vec3(0, 6.5, -10)
+camera.fov = 78
+
+# انتقال بين موجات الزومبي.
+def advance_waves(dt):
+    global wave, wave_delay
+    if any(z.alive for z in zombies) or wave >= MAX_WAVES:
+        return
+    if wave_delay <= 0:
+        wave_delay = 2.0
+        center_message.text = ar("استعد للموجة التالية!")
     else:
-        pygame.draw.line(screen, (245, 205, 165), (x + 9, y + 27), (x - 2, y + 25), 6)
-        pygame.draw.rect(screen, GRAY, (x - 19, y + 20, 22, 8), border_radius=2)
+        wave_delay -= dt
+        if wave_delay <= 0:
+            wave += 1
+            spawn_zombies(wave)
+            center_message.text = ar(f"الموجة {wave}!")
+            update_hud()
 
-def draw_zombie(z):
-    r = z["rect"]
-    x, y = r.x - camera_x, r.y
-    pygame.draw.rect(screen, ZOMBIE_COLOR, (x + 3, y + 12, 26, 28), border_radius=5)
-    pygame.draw.circle(screen, (125, 180, 100), (x + 16, y + 8), 12)
-    pygame.draw.circle(screen, RED, (x + 12, y + 7), 2)
-    pygame.draw.circle(screen, RED, (x + 20, y + 7), 2)
-    pygame.draw.line(screen, ZOMBIE_COLOR, (x + 5, y + 20), (x - 3, y + 29), 5)
-    pygame.draw.line(screen, ZOMBIE_COLOR, (x + 27, y + 20), (x + 35, y + 29), 5)
-    pygame.draw.rect(screen, DARK, (x + 5, y + 38, 9, 4))
-    pygame.draw.rect(screen, DARK, (x + 19, y + 38, 9, 4))
-    if z["hp"] == 1:
-        pygame.draw.rect(screen, RED, (x, y - 8, 32, 4))
 
-def fire_bullet(g):
-    p = g["player"]
-    bx = p.right if g["facing"] == 1 else p.left - 12
-    by = p.y + 25
-    g["bullets"].append({"rect": pygame.Rect(bx, by, 14, 5), "vx": 10 * g["facing"]})
+def update():
+    global fire_cooldown, reload_timer, mobile_move_timer, mobile_jump
+    dt = time.dt
+    if state != "playing":
+        return
+    fire_cooldown = max(0, fire_cooldown - dt)
+    if reload_timer > 0:
+        reload_timer -= dt
+        if reload_timer <= 0:
+            needed = MAG_SIZE - player.ammo
+            loaded = min(needed, player.reserve)
+            player.ammo += loaded
+            player.reserve -= loaded
+            reload_timer = 0
+            update_hud()
+    player.invulnerable = max(0, player.invulnerable - dt)
+    player.color = (color.rgb(245, 245, 245) if player.invulnerable > 0 and
+                    int(player.invulnerable * 12) % 2 == 0 else color.rgb(45, 90, 220))
 
-running = True
-while running:
-    clock.tick(FPS)
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
-                running = False
-            if event.key == pygame.K_r and (game["lost"] or game["won"]):
-                game = reset_game()
-            if not game["lost"] and not game["won"]:
-                if event.key in (pygame.K_SPACE, pygame.K_UP, pygame.K_w) and game["on_ground"]:
-                    game["vy"] = -13
-                if event.key == pygame.K_x:
-                    fire_bullet(game)
+    move_x = held_keys["d"] + held_keys["right arrow"] - held_keys["a"] - held_keys["left arrow"]
+    move_z = held_keys["w"] + held_keys["up arrow"] - held_keys["s"] - held_keys["down arrow"]
+    if mobile_move_timer > 0:
+        move_x += mobile_move.x
+        move_z += mobile_move.z
+        mobile_move_timer = max(0, mobile_move_timer - dt)
+    movement = Vec3(move_x, 0, move_z)
+    if movement.length() > 0:
+        movement = movement.normalized()
+        player.position += movement * PLAYER_SPEED * dt
+        player.rotation_y = math.degrees(math.atan2(movement.x, movement.z))
+    if (held_keys["space"] or mobile_jump) and player.grounded:
+        player.vy = JUMP_SPEED
+        player.grounded = False
+    mobile_jump = False
+    player.vy -= GRAVITY * dt
+    player.y += player.vy * dt
+    if player.y <= .85:
+        player.y, player.vy, player.grounded = .85, 0, True
+    player.x = clamp(player.x, -WORLD_END - 9, WORLD_END + 3)
+    player.z = clamp(player.z, -5, 5)
+    camera_target = player.position + Vec3(0, 6, -10.5)
+    camera.position = lerp(camera.position, camera_target, min(1, dt * 5))
+    camera.look_at(player.position + Vec3(0, .8, 1.2))
 
-    keys = pygame.key.get_pressed()
-    if not game["lost"] and not game["won"]:
-        p = game["player"]
-        game["vx"] = 0
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            game["vx"] = -5
-            game["facing"] = -1
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            game["vx"] = 5
-            game["facing"] = 1
+    if held_keys["x"] or held_keys["left mouse"]:
+        fire_bullet()
+    for bullet in bullets[:]:
+        bullet.position += bullet.velocity * dt
+        bullet.life -= dt
+        target = next((z for z in zombies if z.alive and
+                       (bullet.position - z.position).length() < 1.0), None)
+        if target:
+            target.hp -= 1
+            destroy(bullet)
+            bullets.remove(bullet)
+            if target.hp <= 0:
+                target.alive = False
+                target.enabled = False
+                player.score += 10
+                play_sound("hit")
+        elif bullet.life <= 0 or abs(bullet.x) > WORLD_END + 10:
+            destroy(bullet)
+            bullets.remove(bullet)
 
-        game["vy"] += GRAVITY
-        if game["vy"] > 14:
-            game["vy"] = 14
-        game["on_ground"] = move_and_collide(p, game["vx"], game["vy"])
-        if game["on_ground"]:
-            game["vy"] = 0
-        if p.left < 0:
-            p.left = 0
-        if p.right > WORLD_WIDTH:
-            p.right = WORLD_WIDTH
+    for grenade in grenades[:]:
+        grenade.position += grenade.velocity * dt
+        grenade.velocity.y -= GRAVITY * dt
+        if grenade.y < .25:
+            grenade.y = .25
+            grenade.velocity.y = abs(grenade.velocity.y) * .35
+            grenade.velocity.x *= .75
+            grenade.velocity.z *= .75
+        grenade.fuse -= dt
+        if grenade.fuse <= 0:
+            explode(grenade)
+    for effect in explosions[:]:
+        effect.life -= dt
+        effect.scale += Vec3(12, 12, 12) * dt
+        if effect.life <= 0:
+            destroy(effect)
+            explosions.remove(effect)
 
-        # الكاميرا تتبع اللاعب
-        camera_x = max(0, min(WORLD_WIDTH - WIDTH, p.centerx - WIDTH // 2))
+    for zombie in zombies:
+        if not zombie.alive:
+            continue
+        delta = player.position - zombie.position
+        horizontal = Vec3(delta.x, 0, delta.z)
+        distance = horizontal.length()
+        if distance < 20 and distance > 1.05:
+            direction = horizontal.normalized()
+            zombie.position += direction * zombie.speed * dt
+            zombie.rotation_y = math.degrees(math.atan2(direction.x, direction.z))
+        if distance < 1.4:
+            take_damage()
 
-        # إطلاق النار المستمر عند الضغط على X
-        if keys[pygame.K_x] and random.random() < 0.18:
-            fire_bullet(game)
+    for coin in coins[:]:
+        coin.rotation_y += 120 * dt
+        if (coin.position - player.position).length() < 1.25:
+            destroy(coin)
+            coins.remove(coin)
+            player.score += 5
+            play_sound("coin")
+    advance_waves(dt)
+    if wave == MAX_WAVES and not any(z.alive for z in zombies) and player.x >= WORLD_END:
+        finish_game(True)
+    update_hud()
 
-        for b in game["bullets"][:]:
-            b["rect"].x += b["vx"]
-            if b["rect"].right < 0 or b["rect"].left > WORLD_WIDTH:
-                game["bullets"].remove(b)
-                continue
-            for z in game["zombies"]:
-                if z["alive"] and b["rect"].colliderect(z["rect"]):
-                    z["hp"] -= 1
-                    if b in game["bullets"]:
-                        game["bullets"].remove(b)
-                    if z["hp"] <= 0:
-                        z["alive"] = False
-                        game["score"] += 10
-                    break
+# واجهات البدء والنهاية وأزرارها.
+Button(parent=menu_panel, text=ar("ابدأ المغامرة"), position=(0, -.16),
+       scale=(.32, .1), color=color.rgb(45, 125, 70), text_color=color.white,
+       on_click=start_game)
+Button(parent=end_panel, text=ar("إعادة اللعب"), position=(0, -.18),
+       scale=(.30, .1), color=color.rgb(45, 125, 70), text_color=color.white,
+       on_click=start_game)
 
-        # الزومبي يتحركون باتجاه اللاعب عندما يكون قريبًا
-        for z in game["zombies"]:
-            if not z["alive"]:
-                continue
-            zr = z["rect"]
-            if abs(p.centerx - zr.centerx) < 420:
-                if p.centerx < zr.centerx:
-                    zr.x -= z["speed"]
-                elif p.centerx > zr.centerx:
-                    zr.x += z["speed"]
-            # تثبيت الزومبي على الأرض أو المنصة الأقرب تحته
-            if zr.bottom < GROUND_Y and not any(zr.bottom == pl.top and zr.colliderect(pl) for pl in platforms[1:]):
-                zr.y += 3
-                if zr.bottom > GROUND_Y:
-                    zr.bottom = GROUND_Y
+def input(key):
+    if key == "escape":
+        application.quit()
+    elif key == "left mouse down":
+        fire_bullet()
+    elif key == "g":
+        throw_grenade()
+    elif key == "r":
+        if state in ("won", "lost"):
+            start_game()
+        else:
+            reload_weapon()
 
-            if p.colliderect(zr) and game["invulnerable"] <= 0:
-                game["health"] -= 1
-                game["invulnerable"] = 60
-                # دفع اللاعب بعيدًا قليلًا
-                game["vx"] = -7 if p.centerx < zr.centerx else 7
-                if game["health"] <= 0:
-                    game["lost"] = True
-
-        if game["invulnerable"] > 0:
-            game["invulnerable"] -= 1
-
-        for coin in game["coins"][:]:
-            if p.colliderect(coin):
-                game["coins"].remove(coin)
-                game["score"] += 5
-
-        if p.centerx >= WORLD_WIDTH - 100 and all(not z["alive"] for z in game["zombies"]):
-            game["won"] = True
-
-    draw_world()
-
-    # العملات
-    for coin in game["coins"]:
-        pygame.draw.circle(screen, YELLOW, (coin.centerx - camera_x, coin.centery), 10)
-        pygame.draw.circle(screen, (255, 245, 150), (coin.centerx - camera_x - 3, coin.centery - 3), 999999999)
-
-    # الرصاص
-    for b in game["bullets"]:
-        pygame.draw.rect(screen, YELLOW, (b["rect"].x - camera_x, b["rect"].y, b["rect"].width, b["rect"].height))
-
-    for z in game["zombies"]:
-        if z["alive"]:
-            draw_zombie(z)
-
-    draw_player(game["player"], game["facing"], game["invulnerable"])
-
-    # واجهة اللعبة
-    pygame.draw.rect(screen, (20, 25, 35), (12, 12, 290, 74), border_radius=8)
-    draw_text(f"Health: {game['health']}   Score: {game['score']}", 24, 20)
-    draw_text("Move: A/D or arrows | Jump: SPACE | Shoot: X", 24, 52, WHITE, small_font)
-    draw_text("Defeat all zombies, collect coins, reach the end!", 18, HEIGHT - 30, DARK, small_font)
-
-    if game["lost"] or game["won"]:
-        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 165))
-        screen.blit(overlay, (0, 0))
-        title = "YOU WIN!" if game["won"] else "GAME OVER"
-        title_surface = big_font.render(title, True, YELLOW if game["won"] else RED)
-        screen.blit(title_surface, title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 35)))
-        subtitle = font.render("Press R to play again or ESC to exit", True, WHITE)
-        screen.blit(subtitle, subtitle.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 25)))
-
-    pygame.display.flip()
-
-pygame.quit()
-sys.exit()
+update_hu
